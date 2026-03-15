@@ -1,0 +1,2 @@
+# Brajbhasha-vowel-system-A-spectral-temporal-trade-off-analysis
+An Experiment to acoustically analyze the Brajbhasha vowel system by (1) plotting its vowel space (F1-F2) using Lobanov Normalization, (2) Testing whether it is a mixed-quantity system ("short-long" distinction), and (3) Testing whether it conforms to (or defies) the Dispersion Theory using LMEs, LDA, PERMANOVA, and a Monte Carlo Simulation.

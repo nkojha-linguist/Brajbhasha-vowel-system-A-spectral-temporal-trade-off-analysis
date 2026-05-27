@@ -13,10 +13,16 @@ library(emmeans)
 library(phonTools)
 library(ggpubr)
 library(MASS)
-library(vegan)
-# Read Data
-data <- read_excel("Braj Vowels Data.xlsx", sheet = "Sheet1")
-# Factor Setup (define once)
+library(plotly)  # For 3D plot
+library(sp)  # For point-in-polygon tests
+library(geometry)  # For triangulation and area calculations
+library(gridExtra)  # For arranging plots
+library(grid)
+
+# Read Data (Corrected sheet name)
+data <- read_excel("C:\\Users\\neete\\Desktop\\3rdCollection(Cleaned)\\JOURNAL02\\OralVowels\\OUTPUT (Oral Vowels).xlsx", sheet = "BRAJ VOWEL DATA")
+
+# Factor Setup
 data <- data %>%
   mutate(
     Vowel = factor(Vowel, levels = c("i", "e", "ɛ", "ɪ", "ɐ", "ʊ", "ɑ", "ɔ", "o", "u")),
@@ -25,12 +31,14 @@ data <- data %>%
     Iteration = factor(Iteration),
     Gender = factor(Gender)
   )
+
 # Remove Duration Outliers (IQR method)
 Q1 <- quantile(data$Duration, 0.25)
 Q3 <- quantile(data$Duration, 0.75)
 IQR <- Q3 - Q1
 data <- data %>%
   filter(Duration >= (Q1 - 1.5 * IQR), Duration <= (Q3 + 1.5 * IQR))
+
 # Lobanov Normalization (by Subject)
 data_norm <- data %>%
   group_by(Subject) %>%
@@ -38,124 +46,421 @@ data_norm <- data %>%
     F1_norm = (F1 - mean(F1)) / sd(F1),
     F2_norm = (F2 - mean(F2)) / sd(F2)) %>%
   ungroup()
-# Plot Vowel Space (Normalized & Raw)
-plot_vowel_space <- function(df, x, y, title, xlabel, ylabel, Gender) {
-  # Calculate centroids for each vowel (mean of x and y coordinates)
-  centroids <- df %>%
-    group_by(Vowel) %>%
-    summarise(centroid_x = mean(get(x), na.rm = TRUE), centroid_y = mean(get(y), na.rm = TRUE))
-  ggplot(df, aes_string(x = x, y = y, color = "Vowel")) +
-    # Plot individual points
-    geom_point(alpha = 0.7, size = 2.5) +
-    # Add ellipses
-    stat_ellipse(type = "t", level = 0.95, size = 1.2, alpha = 0.6) +
-    # Add small labels near points (original)
-    geom_text(aes(label = Vowel), vjust = 1.6, size = 3.2, show.legend = FALSE) +
-    # Add CIRCULAR WHITE BACKGROUNDS for large labels
-    geom_point(data = centroids, 
-      aes(x = centroid_x, y = centroid_y, fill = Vowel), color = "black", shape = 21, size = 12, stroke = 0.5, show.legend = FALSE) +
-    scale_fill_brewer(palette = "Paired")  +# Add this to match fill colors
-    # Add LARGE labels at ellipse centers (over white circles)
-    geom_text(data = centroids, aes(x = centroid_x, y = centroid_y, label = Vowel), color = "black", size = 6, fontface = "bold", show.legend = FALSE) +
-    # Reverse axes (as is standard in vowel plots)
-    scale_x_reverse() +
-    scale_y_reverse() +
-    #facet_grid(~Gender) +
-    scale_color_brewer(palette = "Paired") +
-    labs(title = title, x = xlabel, y = ylabel) +
-    theme_minimal(base_size = 13) +
-    theme(strip.placement = "outside", strip.background = element_rect(fill = "gray90", color = "gray60"), legend.position = "right")
-}
 
-plot_vowel_space(data_norm, "F2_norm", "F1_norm", "Normalized Vowel Space of Brajbhasha (Lobanov)", "F2 (z)", "F1 (z)")
-plot_vowel_space(data_norm, "F2", "F1", "Raw Vowel Space of Brajbhasha", "F2 (Hz)", "F1 (Hz)")
 
-# PLOT SAME VOWEL SPACES (GENDER_WISE)
+# ============================================================
+# 1. Combined Plots: Static Vowel Spaces + Trajectories
+# (Raw and Normalized, each as a single stacked plot)
+# ============================================================
+
+# ----- Function for Static Vowel Space Plot -----
 plot_vowel_space <- function(df, x, y, title, xlabel, ylabel) {
   # Calculate centroids for each vowel AND gender
   centroids <- df %>%
     group_by(Vowel, Gender) %>%
-    summarise(centroid_x = mean(get(x), na.rm = TRUE), centroid_y = mean(get(y), na.rm = TRUE), .groups = 'drop')
+    summarise(centroid_x = mean(get(x), na.rm = TRUE), 
+              centroid_y = mean(get(y), na.rm = TRUE), .groups = 'drop')
+  
   ggplot(df, aes_string(x = x, y = y, color = "Vowel")) +
-    geom_point(alpha = 0.7, size = 2.5) + # Plot individual points
-    stat_ellipse(type = "t", level = 0.68, size = 1.2, alpha = 0.6) + # Add ellipses
-    # Add small labels near points (original)
+    geom_point(alpha = 0.7, size = 2.5) +
+    stat_ellipse(type = "t", level = 0.95, size = 0.8, alpha = 0.6) +
     geom_text(aes(label = Vowel), vjust = 1.6, size = 3.2, show.legend = FALSE) +
-    # Add CIRCULAR WHITE BACKGROUNDS for large labels
-    geom_point(data = centroids, aes(x = centroid_x, y = centroid_y, fill = Vowel), color = "black", shape = 21, size = 12, stroke = 0.5, show.legend = FALSE) +
+    geom_point(data = centroids, aes(x = centroid_x, y = centroid_y, fill = Vowel), 
+               color = "black", shape = 21, size = 9, stroke = 0.5, show.legend = FALSE) +
     scale_fill_brewer(palette = "Paired") +
-    # Add LARGE labels at ellipse centers (over white circles)
-    geom_text(data = centroids, aes(x = centroid_x, y = centroid_y, label = Vowel), color = "black", size = 6, fontface = "bold", show.legend = FALSE) +
-    # Reverse axes (as is standard in vowel plots)
+    geom_text(data = centroids, aes(x = centroid_x, y = centroid_y, label = Vowel), 
+              color = "black", size = 6, fontface = "bold", show.legend = FALSE) +
     scale_x_reverse() +
     scale_y_reverse() +
     facet_grid(~Gender) +
     scale_color_brewer(palette = "Paired") +
     labs(title = title, x = xlabel, y = ylabel) +
     theme_minimal(base_size = 13) +
-    theme(strip.placement = "outside", strip.background = element_rect(fill = "gray90", color = "gray60"), legend.position = "right")
+    theme(strip.placement = "outside", 
+          strip.background = element_rect(fill = "gray90", color = "gray60"), 
+          legend.position = "right")
 }
-plot_vowel_space(data_norm, "F2_norm", "F1_norm", "Normalized Vowel Space of Brajbhasha (Lobanov)", "F2 (z)", "F1 (z)")
-plot_vowel_space(data_norm, "F2", "F1", "Raw Vowel Space of Brajbhasha", "F2 (Hz)", "F1 (Hz)")
+
+# ----- Prepare Data for Trajectory Plots -----
+# Reshape and Clean for contour data
+df_long <- data %>%
+  rename(F1_mid = F1, F2_mid = F2) %>%
+  pivot_longer(
+    cols = matches("F[12]_\\d+"), 
+    names_to = c(".value", "time_point"), 
+    names_pattern = "(F\\d)_(\\d+)"
+  ) %>%
+  mutate(time_point = as.numeric(time_point))
+
+# Apply Lobanov Normalization to contour data
+df_long <- df_long %>%
+  group_by(Subject) %>%
+  mutate(
+    F1_norm = (F1 - mean(F1, na.rm = TRUE)) / sd(F1, na.rm = TRUE),
+    F2_norm = (F2 - mean(F2, na.rm = TRUE)) / sd(F2, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Create Summary Data (grouping by Gender, Vowel, time_point)
+df_summary <- df_long %>%
+  group_by(Gender, Vowel, time_point) %>%
+  summarise(
+    F1_raw_avg = mean(F1, na.rm = TRUE),
+    F2_raw_avg = mean(F2, na.rm = TRUE),
+    F1_norm_avg = mean(F1_norm, na.rm = TRUE),
+    F2_norm_avg = mean(F2_norm, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# ----- Raw Static Vowel Space Plot -----
+plot_raw_static <- plot_vowel_space(data_norm, "F2", "F1", 
+                                    "A. Raw Vowel Space (Static)", "F2 (Hz)", "F1 (Hz)")
+
+# ----- Raw Trajectory Plot -----
+plot_raw_trajectory <- ggplot(df_summary, aes(x = F2_raw_avg, y = F1_raw_avg, color = Vowel, group = Vowel)) +
+  geom_text(aes(label = Vowel), vjust = 1.6, size = 3.2, show.legend = FALSE) +
+  geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.25, "cm"), type = "closed")) +
+  scale_x_reverse() + 
+  scale_y_reverse() +
+  scale_color_brewer(palette = "Paired") +
+  facet_grid(. ~ Gender) +
+  theme_minimal() +
+  theme(strip.placement = "outside", 
+        strip.background = element_rect(fill = "gray90", color = "gray60"), 
+        legend.position = "right") +
+  labs(title = "B. Raw Vowel Trajectories (Formant Contours)", 
+       x = "F2 (Hz)", y = "F1 (Hz)")
+
+# ----- Normalized Static Vowel Space Plot -----
+plot_norm_static <- plot_vowel_space(data_norm, "F2_norm", "F1_norm", 
+                                     "A. Normalized Vowel Space (Lobanov, Static)", 
+                                     "F2 (z)", "F1 (z)")
+
+# ----- Normalized Trajectory Plot -----
+plot_norm_trajectory <- ggplot(df_summary, aes(x = F2_norm_avg, y = F1_norm_avg, color = Vowel, group = Vowel)) +
+  geom_text(aes(label = Vowel), vjust = 1.6, size = 3.2, show.legend = FALSE) +
+  geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.25, "cm"), type = "closed")) +
+  scale_x_reverse() + 
+  scale_y_reverse() +
+  scale_color_brewer(palette = "Paired") +
+  facet_grid(. ~ Gender) +
+  theme_minimal() +
+  theme(strip.placement = "outside", 
+        strip.background = element_rect(fill = "gray90", color = "gray60"), 
+        legend.position = "right") +
+  labs(title = "B. Normalized Vowel Trajectories (Lobanov, Formant Contours)", 
+       x = "F2 (z)", y = "F1 (z)")
+
+# ----- Combine Raw plots (one above the other) -----
+combined_raw <- grid.arrange(plot_raw_static, plot_raw_trajectory, 
+                             ncol = 1,
+                             heights = c(1, 1))
+
+# Display combined raw plot
+combined_raw
+
+# ----- Combine Normalized plots (one above the other) -----
+combined_norm <- grid.arrange(plot_norm_static, plot_norm_trajectory, 
+                              ncol = 1,
+                              heights = c(1, 1))
+
+# Display combined normalized plot
+combined_norm
 
 
-# F1 and F2 Boxplots (Raw and Normalized)
-ggarrange(
-  ggboxplot(data_norm, x = "Vowel", y = "F1", color = "VowelType", title = "F1 (Raw)", xlab = "Vowel", ylab = "F1 (Hz)"),
-  ggboxplot(data_norm, x = "Vowel", y = "F1_norm", color = "VowelType", title = "F1 (Lobanov)", xlab = "Vowel", ylab = "F1 (z)"),
-  nrow = 2, common.legend = TRUE, legend = "right"
-)
-ggarrange(
-  ggboxplot(data_norm, x = "Vowel", y = "F2", color = "VowelType", title = "F2 (Raw)", xlab = "Vowel", ylab = "F2 (Hz)"),
-  ggboxplot(data_norm, x = "Vowel", y = "F2_norm", color = "VowelType", title = "F2 (Lobanov)", xlab = "Vowel", ylab = "F2 (z)"),
-  nrow = 2, common.legend = TRUE, legend = "right"
-)
+# ============================================================
+# 2. LMEs on F1 and F2 for "Vowel" (10 vowels) with EMMeans & Pairwise contrasts
+# ============================================================
 
-# Linear Mixed Models (10-vowel system)
 data$Vowel <- relevel(data$Vowel, ref = "ɐ")
+
 mod_f1 <- lmer(F1 ~ Vowel + (1|Subject), data = data)
 mod_f2 <- lmer(F2 ~ Vowel + (1|Subject), data = data)
-summary(mod_f1); summary(mod_f2)
+
+summary(mod_f1)
+summary(mod_f2)
+
+# Estimated Marginal Means and Pairwise Contrasts
 emmeans(mod_f1, pairwise ~ Vowel)
 emmeans(mod_f2, pairwise ~ Vowel)
 
-# LDA for Classification Accuracy
-lda_model <- lda(Vowel ~ F1 + F2 + Duration, data = data)
-lda_pred <- predict(lda_model)$class
-mean(lda_pred == data$Vowel)
-table(Predicted = lda_pred, Actual = data$Vowel)
 
-# PERMANOVA
-formant_data <- dplyr::select(data, F1, F2)
-adonis2(formant_data ~ Vowel, data = data, method = "euclidean")
 
-# Dendrogram of Vowel Centroids
-centroids <- data %>%
+# ============================================================
+# 3. Comparing two LDAs (Using Normalized Values)
+# ============================================================
+
+# Ensure data_norm includes normalized duration
+data_norm <- data %>%
+  group_by(Subject) %>%
+  mutate(
+    F1_norm = (F1 - mean(F1, na.rm = TRUE)) / sd(F1, na.rm = TRUE),
+    F2_norm = (F2 - mean(F2, na.rm = TRUE)) / sd(F2, na.rm = TRUE),
+    Dur_norm = (Duration - mean(Duration, na.rm = TRUE)) / sd(Duration, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# LDA with only F1_norm and F2_norm
+lda_model_norm <- lda(Vowel ~ F1_norm + F2_norm, data = data_norm)
+lda_pred_norm <- predict(lda_model_norm)$class
+acc_f1f2_norm <- mean(lda_pred_norm == data_norm$Vowel)
+cat("\nClassification Accuracy (F1_norm + F2_norm only):", round(acc_f1f2_norm * 100, 2), "%\n")
+table(Predicted = lda_pred_norm, Actual = data_norm$Vowel)
+
+# LDA with F1_norm, F2_norm, and Dur_norm
+lda_model2_norm <- lda(Vowel ~ F1_norm + F2_norm + Dur_norm, data = data_norm)
+lda_pred2_norm <- predict(lda_model2_norm)$class
+acc_f1f2dur_norm <- mean(lda_pred2_norm == data_norm$Vowel)
+cat("\nClassification Accuracy (F1_norm + F2_norm + Dur_norm):", round(acc_f1f2dur_norm * 100, 2), "%\n")
+cat("\nImprovement:", round((acc_f1f2dur_norm - acc_f1f2_norm) * 100, 2), "%\n")
+table(Predicted = lda_pred2_norm, Actual = data_norm$Vowel)
+
+# Compare the results
+cat("\n========== COMPARISON ==========\n\n")
+cat("\nNormalized F1_norm+F2_norm accuracy:", round(acc_f1f2_norm * 100, 2), "%\n\n")
+cat("\nNormalized F1_norm+F2_norm+Dur_norm accuracy:", round(acc_f1f2dur_norm * 100, 2), "%\n\n")
+
+
+
+
+# ============================================================
+# 4. Comparing Dendrograms of Vowel Centroids (Fully Normalized: F1_norm+F2_norm vs. F1_norm+F2_norm+Dur_norm)
+# ============================================================
+
+# First, ensure data_norm includes normalized duration
+data_norm <- data %>%
+  group_by(Subject) %>%
+  mutate(
+    F1_norm = (F1 - mean(F1, na.rm = TRUE)) / sd(F1, na.rm = TRUE),
+    F2_norm = (F2 - mean(F2, na.rm = TRUE)) / sd(F2, na.rm = TRUE),
+    Dur_norm = (Duration - mean(Duration, na.rm = TRUE)) / sd(Duration, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Dendrogram A: with only normalized F1 and F2 (z-scored)
+centroids_norm_f1f2 <- data_norm %>%
   group_by(Vowel) %>%
-  summarise(F1 = mean(F1, na.rm = TRUE), F2 = mean(F2, na.rm = TRUE))
-rownames(centroids) <- centroids$Vowel
-dist_matrix <- dist(centroids[, c("F1", "F2")])
-hc <- hclust(dist_matrix)
-hc$labels <- rownames(centroids)
-plot(hc, main = "Dendrogram of Vowel Centroids", xlab = "Vowels", sub = "", ylab = "Euclidean Distance", las = 1)
+  summarise(
+    F1_norm = mean(F1_norm, na.rm = TRUE), 
+    F2_norm = mean(F2_norm, na.rm = TRUE)
+  )
 
-# Vowel Duration Test (Short vs Long)
+rownames(centroids_norm_f1f2) <- centroids_norm_f1f2$Vowel
+dist_matrix_norm_f1f2 <- dist(centroids_norm_f1f2[, c("F1_norm", "F2_norm")])
+hc_norm_f1f2 <- hclust(dist_matrix_norm_f1f2)
+hc_norm_f1f2$labels <- rownames(centroids_norm_f1f2)
+
+# Dendrogram B: with normalized F1, F2, and normalized Duration
+centroids_norm_f1f2dur <- data_norm %>%
+  group_by(Vowel) %>%
+  summarise(
+    F1_norm = mean(F1_norm, na.rm = TRUE), 
+    F2_norm = mean(F2_norm, na.rm = TRUE), 
+    Dur_norm = mean(Dur_norm, na.rm = TRUE)
+  )
+
+rownames(centroids_norm_f1f2dur) <- centroids_norm_f1f2dur$Vowel
+dist_matrix_norm_f1f2dur <- dist(centroids_norm_f1f2dur[, c("F1_norm", "F2_norm", "Dur_norm")])
+hc_norm_f1f2dur <- hclust(dist_matrix_norm_f1f2dur)
+hc_norm_f1f2dur$labels <- rownames(centroids_norm_f1f2dur)
+
+# Set up plotting area: 2 rows, 1 column
+par(mfrow = c(2, 1), mar = c(4, 4, 4, 2), oma = c(0, 0, 2, 0))
+
+# Plot A (top) - Fully Normalized F1 + F2
+plot(hc_norm_f1f2, main = "A. Dendrogram (F1_norm + F2_norm)", xlab = "Vowels", sub = "", ylab = "Euclidean Distance (z-score units)", las = 1)
+# Plot B (bottom) - Fully Normalized F1 + F2 + Duration
+plot(hc_norm_f1f2dur, main = "B. Dendrogram (F1_norm + F2_norm + Dur_norm)", xlab = "Vowels", sub = "", ylab = "Euclidean Distance (z-score units)", las = 1)
+
+# Reset plotting parameters
+par(mfrow = c(1, 1))
+
+
+
+# ============================================================
+# 5. LME on Duration for "VowelType" (Short vs. Long) with EMMeans
+# ============================================================
+
 mod_dur <- lmer(Duration ~ VowelType + (1|Subject), data = data)
 summary(mod_dur)
 emmeans(mod_dur, pairwise ~ VowelType)
+
+
+
+# ============================================================
+# 6. Plotting Vowel Duration Boxplot
+# ============================================================
+
+# Ensure Vowel is a factor with the correct order BEFORE plotting
+data$Vowel <- factor(data$Vowel, levels = c("i", "e", "ɛ", "ɪ", "ɐ", "ʊ", "ɑ", "ɔ", "o", "u"))
+
 ggplot(data, aes(x = Vowel, y = Duration, fill = VowelType)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.7) +
   geom_jitter(width = 0.2, size = 1.5, alpha = 0.5, aes(color = VowelType)) +
   labs(title = "Vowel Duration by Vowel Type", x = "Vowel", y = "Duration (ms)") +
   scale_fill_brewer(palette = "Set2") +
   scale_color_brewer(palette = "Set1") +
+  scale_x_discrete(drop = FALSE) +  # Ensures all levels are shown even if some missing
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"),
         axis.text.x = element_text(angle = 45, hjust = 1))
 
-# DISPERSION THEORY TESTING
 
-# Normalize F1-F2 again if needed (post-outlier removal)
+# ============================================================
+# 7. 3D Bar Graph: CYLINDRICAL Pillars with Vowel Labels
+# (F1_norm + F2_norm + Raw Duration)
+# ============================================================
+
+# Prepare data for 3D plot: centroids for each vowel
+centroids_3d <- data_norm %>%
+  group_by(Vowel, VowelType) %>%
+  summarise(
+    F1_norm = mean(F1_norm, na.rm = TRUE),
+    F2_norm = mean(F2_norm, na.rm = TRUE),
+    Duration = mean(Duration, na.rm = TRUE),  # Raw duration, not normalized
+    .groups = 'drop'
+  )
+
+# Define colors for Short vs Long
+centroids_3d$bar_color <- ifelse(centroids_3d$VowelType == "Short", "#F8766D", "#00BFC4")
+
+# Function to create a cylinder mesh
+create_cylinder <- function(x_center, y_center, z_height, color, radius = 0.1, segments = 20) {
+  
+  # Generate angles around the circle
+  angles <- seq(0, 2 * pi, length.out = segments + 1)
+  
+  # Bottom circle points (z = 0)
+  x_bottom <- x_center + radius * cos(angles)
+  y_bottom <- y_center + radius * sin(angles)
+  z_bottom <- rep(0, length(angles))
+  
+  # Top circle points (z = z_height)
+  x_top <- x_center + radius * cos(angles)
+  y_top <- y_center + radius * sin(angles)
+  z_top <- rep(z_height, length(angles))
+  
+  # Combine all vertices
+  vertices <- data.frame(
+    x = c(x_bottom, x_top),
+    y = c(y_bottom, y_top),
+    z = c(z_bottom, z_top)
+  )
+  
+  n <- segments + 1
+  
+  # Create indices for triangles
+  i <- c()
+  j <- c()
+  k <- c()
+  
+  for (s in 1:segments) {
+    b1 <- s
+    b2 <- s + 1
+    t1 <- n + s
+    t2 <- n + s + 1
+    
+    i <- c(i, b1, b1, t1)
+    j <- c(j, b2, t1, t2)
+    k <- c(k, b2, t2, t2)
+  }
+  
+  # Add bottom cap
+  center_bottom <- which.min(rowSums((vertices[,1:2] - c(x_center, y_center))^2))
+  for (s in 1:segments) {
+    b1 <- s
+    b2 <- s + 1
+    i <- c(i, center_bottom, b1, b2)
+    j <- c(j, b1, b2, center_bottom)
+    k <- c(k, b2, center_bottom, b1)
+  }
+  
+  # Add top cap
+  center_top <- which.min(rowSums((vertices[1:n,1:2] - c(x_center, y_center))^2)) + n
+  for (s in 1:segments) {
+    t1 <- n + s
+    t2 <- n + s + 1
+    i <- c(i, center_top, t1, t2)
+    j <- c(j, t1, t2, center_top)
+    k <- c(k, t2, center_top, t1)
+  }
+  
+  return(list(
+    type = "mesh3d",
+    x = vertices$x,
+    y = vertices$y,
+    z = vertices$z,
+    i = i - 1,
+    j = j - 1,
+    k = k - 1,
+    facecolor = rep(color, length(i)),
+    opacity = 0.85,
+    hoverinfo = "none",
+    showlegend = FALSE
+  ))
+}
+
+# Initialize plot
+p <- plot_ly()
+
+# Add cylindrical pillars for each vowel
+for (i in 1:nrow(centroids_3d)) {
+  cylinder <- create_cylinder(
+    x_center = centroids_3d$F2_norm[i],
+    y_center = centroids_3d$F1_norm[i],
+    z_height = centroids_3d$Duration[i],
+    color = centroids_3d$bar_color[i],
+    radius = 0.12,
+    segments = 30
+  )
+  p <- p %>% add_trace(type = "mesh3d", 
+                       x = cylinder$x, y = cylinder$y, z = cylinder$z,
+                       i = cylinder$i, j = cylinder$j, k = cylinder$k,
+                       facecolor = cylinder$facecolor, opacity = cylinder$opacity,
+                       hoverinfo = cylinder$hoverinfo, showlegend = cylinder$showlegend)
+}
+
+# Add vowel labels slightly above the pillars
+p <- p %>%
+  add_trace(
+    data = centroids_3d,
+    x = ~F2_norm,
+    y = ~F1_norm,
+    z = ~Duration + 5,
+    text = ~Vowel,
+    type = "scatter3d",
+    mode = "text",
+    textfont = list(size = 35, color = "black", weight = "bold"),
+    textposition = "middle center",
+    showlegend = FALSE,
+    hoverinfo = "none"
+  )
+
+# Layout with reversed axes
+p <- p %>%
+  layout(
+    title = list(text = "3D Vowel Space: F1_norm, F2_norm (Lobanov) and Raw Duration", 
+                 font = list(size = 14)),
+    scene = list(
+      xaxis = list(title = "F2 (z) - Backness →", autorange = "reversed", gridcolor = "lightgray"),
+      yaxis = list(title = "F1 (z) - Height →", autorange = "reversed", gridcolor = "lightgray"),
+      zaxis = list(title = "Duration (ms)", range = c(0, max(centroids_3d$Duration) * 1.2), gridcolor = "lightgray"),
+      camera = list(eye = list(x = 1.8, y = 1.8, z = 1.5)),
+      aspectmode = "manual",
+      aspectratio = list(x = 1.2, y = 1.2, z = 0.8)
+    )
+  )
+
+# Display the plot
+p
+
+
+
+# ============================================================
+# 8. Dispersion Theory Testing (Token-Based Convex Hull - NO OUTLIER EXCLUSION)
+# ============================================================
+
+# Ensure normalized data is clean (post-outlier removal - NONE, using all data)
 data_norm <- data %>%
   group_by(Subject) %>%
   mutate(
@@ -164,35 +469,155 @@ data_norm <- data %>%
   ) %>%
   ungroup()
 
-# Observed Global Dispersion Score
+# Step 1: Calculate convex hull using ALL tokens (no outlier exclusion)
+hull_indices <- chull(data_norm$F2_norm, data_norm$F1_norm)
+hull_points <- data_norm[hull_indices, c("F2_norm", "F1_norm")]
+
+# Close the polygon (repeat first point at the end)
+hull_points_closed <- rbind(hull_points, hull_points[1, ])
+
+# Step 2: Calculate area of the convex hull
+hull_area <- abs(polyarea(hull_points_closed$F2_norm, hull_points_closed$F1_norm))
+cat("\nToken-based convex hull area (100% of tokens):", round(hull_area, 4), "square units\n")
+
+# Step 3: Identify which vowel categories appear on the hull
+peripheral_vowels <- unique(data_norm$Vowel[hull_indices])
+cat("Peripheral vowel tokens from:", paste(peripheral_vowels, collapse = ", "), "\n")
+
+# Step 4: Calculate centroids for observed dispersion score
 centroids <- data_norm %>%
   group_by(Vowel) %>%
-  summarise(F1_norm = mean(F1_norm, na.rm = TRUE), F2_norm = mean(F2_norm, na.rm = TRUE))
-dist_matrix <- dist(centroids[, c("F1_norm", "F2_norm")])
-obs_disp <- mean(as.numeric(dist_matrix))
-cat("\nObserved Global Dispersion Score:", round(obs_disp, 4), "\n")
+  summarise(
+    F1_norm = mean(F1_norm, na.rm = TRUE),
+    F2_norm = mean(F2_norm, na.rm = TRUE),
+    .groups = 'drop'
+  )
 
-# Simulations for Null Distribution
+# Step 5: Plot the convex hull with all tokens
+ggplot() +
+  # Plot all individual tokens as small points
+  geom_point(data = data_norm, aes(x = F2_norm, y = F1_norm, color = Vowel), 
+             alpha = 0.3, size = 1.5) +
+  # Plot vowel centroids as larger points with labels
+  geom_point(data = centroids, aes(x = F2_norm, y = F1_norm), 
+             size = 4, shape = 21, fill = "white", color = "black") +
+  geom_text(data = centroids, aes(x = F2_norm, y = F1_norm, label = Vowel), 
+            vjust = -1.2, hjust = 0.5, size = 4.5) +
+  # Plot the convex hull boundary
+  geom_polygon(data = hull_points_closed, aes(x = F2_norm, y = F1_norm), 
+               fill = NA, color = "black", linetype = "dashed", size = 1.2) +
+  scale_x_reverse() +
+  scale_y_reverse() +
+  labs(title = "Vowel Space with Token-Based Convex Hull (No Outlier Exclusion)",
+       subtitle = paste("Hull vertices:", nrow(hull_points_closed)-1, 
+                        "| Area:", round(hull_area, 3),
+                        "| Peripheral vowels:", paste(peripheral_vowels, collapse = ", ")),
+       x = "F2 (z) - Backness →", y = "F1 (z) - Height →") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+# Step 6: Function to generate random points within convex hull using rejection sampling (simpler and more reliable than triangulation)
+generate_random_point_in_convex_hull <- function(hull_points, n = 1, max_attempts = 100000) {
+  # hull_points should be a dataframe with columns F2_norm, F1_norm (closed polygon)
+  # Remove the last repeated point for the polygon definition
+  hull_unique <- hull_points[1:(nrow(hull_points) - 1), ]
+  
+  # Create a SpatialPolygons object for point-in-polygon testing
+  poly_matrix <- as.matrix(hull_unique[, c("F2_norm", "F1_norm")])
+  poly <- Polygon(poly_matrix)
+  polys <- Polygons(list(poly), 1)
+  sp_poly <- SpatialPolygons(list(polys))
+  
+  # Get bounding box for efficient sampling
+  x_range <- range(hull_unique$F2_norm)
+  y_range <- range(hull_unique$F1_norm)
+  
+  points <- list()
+  attempts <- 0
+  
+  while(length(points) < n && attempts < max_attempts) {
+    # Generate random point in bounding box
+    test_point <- cbind(runif(1, x_range[1], x_range[2]),
+                        runif(1, y_range[1], y_range[2]))
+    
+    # Check if point is inside convex hull
+    sp_point <- SpatialPoints(test_point)
+    inside <- !is.na(over(sp_point, sp_poly))
+    
+    if(inside) {
+      points <- append(points, list(c(test_point[1,1], test_point[1,2])))
+    }
+    attempts <- attempts + 1
+  }
+  
+  if(length(points) < n) {
+    warning(paste("Only generated", length(points), "points out of", n, 
+                  "after", max_attempts, "attempts"))
+  }
+  
+  # Return as matrix with column names
+  result <- do.call(rbind, points)
+  colnames(result) <- c("F2_norm", "F1_norm")
+  return(result)
+}
+
+# Test the function with a small number of points
+cat("\nTesting random point generation...")
+test_points <- generate_random_point_in_convex_hull(hull_points_closed, 5)
+cat(" Done.\n")
+
+# Step 7: Observed Global Dispersion Score (using 10 centroids)
+obs_dist_matrix <- dist(centroids[, c("F2_norm", "F1_norm")])
+obs_disp <- mean(as.numeric(obs_dist_matrix))
+cat("\nObserved Global Dispersion Score (10 vowel centroids):", round(obs_disp, 4), "\n")
+
+# Step 8: Run Monte Carlo simulations - generate 10 random centroids within convex hull
 set.seed(42)
-n_sim <- 1000
-n_vowels <- length(unique(data_norm$Vowel))
-F1_rng <- range(data_norm$F1_norm)
-F2_rng <- range(data_norm$F2_norm)
+n_sim <- 10000
+n_vowels <- nrow(centroids)  # This is 10
+
+cat("\nRunning", n_sim, "simulations (this may take a moment)...\n")
 
 sim_scores <- replicate(n_sim, {
-  sim_f1 <- runif(n_vowels, F1_rng[1], F1_rng[2])
-  sim_f2 <- runif(n_vowels, F2_rng[1], F2_rng[2])
-  mean(dist(cbind(sim_f1, sim_f2)))
+  # Generate n_vowels (10) random points within the convex hull
+  # These represent hypothetical vowel category centroids
+  random_vowels <- generate_random_point_in_convex_hull(hull_points_closed, n_vowels)
+  
+  # Calculate the average pairwise Euclidean distance among these 10 random centroids
+  sim_dist_matrix <- dist(random_vowels)
+  mean(as.numeric(sim_dist_matrix))
 })
 
-# Visualize & Compare
+cat("Simulations complete.\n")
+
+# Step 9: Histogram comparing observed vs. simulated
 hist(sim_scores, breaks = 40, col = "lightblue",
-     main = "Simulated Dispersion vs Observed",
+     main = "Simulated Dispersion of 10 Vowel Categories vs Observed",
      xlab = "Average Pairwise Euclidean Distance",
      xlim = range(c(sim_scores, obs_disp)))
 abline(v = obs_disp, col = "red", lwd = 3)
-legend("topright", legend = "Observed", col = "red", lwd = 3)
+legend("topright", legend = paste("Observed =", round(obs_disp, 3)), 
+       col = "red", lwd = 3)
 
-# p-value
+# Step 10: p-value
 p_val <- mean(sim_scores >= obs_disp)
-cat("\nProportion of simulated systems more dispersed than observed (p-value):", round(p_val, 4), "\n")
+cat("\nProportion of simulated systems (10 categories) more dispersed than observed:", round(p_val, 4), "\n")
+
+# Additional summary statistics
+cat("\n--- Summary Statistics ---")
+cat("\nMean simulated dispersion:", round(mean(sim_scores), 4))
+cat("\nSD simulated dispersion:", round(sd(sim_scores), 4))
+cat("\nObserved dispersion percentile in null distribution:", 
+    round(mean(sim_scores <= obs_disp) * 100, 4), "%")
+
+# Create a density plot comparison
+sim_df <- data.frame(dispersion = sim_scores)
+ggplot(sim_df, aes(x = dispersion)) +
+  geom_density(fill = "lightblue", alpha = 0.6) +
+  geom_vline(xintercept = obs_disp, color = "red", size = 1.2) +
+  labs(title = "Density Plot: Simulated vs Observed Dispersion",
+       x = "Average Pairwise Euclidean Distance", y = "Density") +
+  annotate("text", x = obs_disp + 0.05, y = 0.5, 
+           label = paste("Observed =", round(obs_disp, 4)), 
+           color = "red", hjust = 0) +
+  theme_minimal()

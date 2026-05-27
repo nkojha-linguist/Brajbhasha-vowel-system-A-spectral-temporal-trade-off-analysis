@@ -20,7 +20,7 @@ library(gridExtra)  # For arranging plots
 library(grid)
 
 # Read Data (Corrected sheet name)
-data <- read_excel("C:\\Users\\neete\\Desktop\\3rdCollection(Cleaned)\\JOURNAL02\\OralVowels\\OUTPUT (Oral Vowels).xlsx", sheet = "BRAJ VOWEL DATA")
+data <- read_excel("D:\\Oral Vowels.xlsx", sheet = "BRAJ VOWEL DATA")
 
 # Factor Setup
 data <- data %>%

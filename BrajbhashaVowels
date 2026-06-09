@@ -18,9 +18,14 @@ library(sp)  # For point-in-polygon tests
 library(geometry)  # For triangulation and area calculations
 library(gridExtra)  # For arranging plots
 library(grid)
+library(writexl)
+library(reshape2)
+library(mgcv)  # For GAMMs (includes mvn family)
+library(itsadug)  # For visualizing and analyzing GAMMs
+library(patchwork)
 
 # Read Data (Corrected sheet name)
-data <- read_excel("D:\\Oral Vowels.xlsx", sheet = "BRAJ VOWEL DATA")
+data <- read_excel("D:\\SuppPub1.xlsx", sheet = "BRAJ VOWEL DATA")
 
 # Factor Setup
 data <- data %>%
@@ -39,18 +44,25 @@ IQR <- Q3 - Q1
 data <- data %>%
   filter(Duration >= (Q1 - 1.5 * IQR), Duration <= (Q3 + 1.5 * IQR))
 
-# Lobanov Normalization (by Subject)
+# Apply Traunmüller (1990) Bark-scale conversion to raw F1 and F2
+data <- data %>%
+  mutate(
+    F1_Bark = (26.81 * F1) / (1960 + F1) - 0.53,
+    F2_Bark = (26.81 * F2) / (1960 + F2) - 0.53
+  )
+
+# Lobanov Normalization (by Subject) on Bark-scaled values
 data_norm <- data %>%
   group_by(Subject) %>%
   mutate(
-    F1_norm = (F1 - mean(F1)) / sd(F1),
-    F2_norm = (F2 - mean(F2)) / sd(F2)) %>%
+    F1_norm = (F1_Bark - mean(F1_Bark)) / sd(F1_Bark),
+    F2_norm = (F2_Bark - mean(F2_Bark)) / sd(F2_Bark)) %>%
   ungroup()
 
 
 # ============================================================
 # 1. Combined Plots: Static Vowel Spaces + Trajectories
-# (Raw and Normalized, each as a single stacked plot)
+# (Bark-scaled and Normalized, each as a single stacked plot)
 # ============================================================
 
 # ----- Function for Static Vowel Space Plot -----
@@ -76,7 +88,9 @@ plot_vowel_space <- function(df, x, y, title, xlabel, ylabel) {
     scale_color_brewer(palette = "Paired") +
     labs(title = title, x = xlabel, y = ylabel) +
     theme_minimal(base_size = 13) +
-    theme(strip.placement = "outside", 
+    theme(axis.text.x = element_text(angle = 0, face = "bold", size = 12), 
+          axis.text.y = element_text(angle = 0, face = "bold", size = 12), 
+          strip.placement = "outside", 
           strip.background = element_rect(fill = "gray90", color = "gray60"), 
           legend.position = "right")
 }
@@ -92,12 +106,19 @@ df_long <- data %>%
   ) %>%
   mutate(time_point = as.numeric(time_point))
 
-# Apply Lobanov Normalization to contour data
+# Apply Bark-scale conversion to contour F1 and F2
+df_long <- df_long %>%
+  mutate(
+    F1_Bark = (26.81 * F1) / (1960 + F1) - 0.53,
+    F2_Bark = (26.81 * F2) / (1960 + F2) - 0.53
+  )
+
+# Apply Lobanov Normalization to contour Bark-scaled data
 df_long <- df_long %>%
   group_by(Subject) %>%
   mutate(
-    F1_norm = (F1 - mean(F1, na.rm = TRUE)) / sd(F1, na.rm = TRUE),
-    F2_norm = (F2 - mean(F2, na.rm = TRUE)) / sd(F2, na.rm = TRUE)
+    F1_norm = (F1_Bark - mean(F1_Bark, na.rm = TRUE)) / sd(F1_Bark, na.rm = TRUE),
+    F2_norm = (F2_Bark - mean(F2_Bark, na.rm = TRUE)) / sd(F2_Bark, na.rm = TRUE)
   ) %>%
   ungroup()
 
@@ -105,18 +126,18 @@ df_long <- df_long %>%
 df_summary <- df_long %>%
   group_by(Gender, Vowel, time_point) %>%
   summarise(
-    F1_raw_avg = mean(F1, na.rm = TRUE),
-    F2_raw_avg = mean(F2, na.rm = TRUE),
+    F1_raw_avg = mean(F1_Bark, na.rm = TRUE),
+    F2_raw_avg = mean(F2_Bark, na.rm = TRUE),
     F1_norm_avg = mean(F1_norm, na.rm = TRUE),
     F2_norm_avg = mean(F2_norm, na.rm = TRUE),
     .groups = 'drop'
   )
 
-# ----- Raw Static Vowel Space Plot -----
-plot_raw_static <- plot_vowel_space(data_norm, "F2", "F1", 
-                                    "A. Raw Vowel Space (Static)", "F2 (Hz)", "F1 (Hz)")
+# ----- Bark-scaled Static Vowel Space Plot -----
+plot_raw_static <- plot_vowel_space(data_norm, "F2_Bark", "F1_Bark", 
+                                    "A. Bark-scaled Vowel Space (Static)", "F2 (Bark)", "F1 (Bark)")
 
-# ----- Raw Trajectory Plot -----
+# ----- Bark-scaled Trajectory Plot -----
 plot_raw_trajectory <- ggplot(df_summary, aes(x = F2_raw_avg, y = F1_raw_avg, color = Vowel, group = Vowel)) +
   geom_text(aes(label = Vowel), vjust = 1.6, size = 3.2, show.legend = FALSE) +
   geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.25, "cm"), type = "closed")) +
@@ -125,16 +146,15 @@ plot_raw_trajectory <- ggplot(df_summary, aes(x = F2_raw_avg, y = F1_raw_avg, co
   scale_color_brewer(palette = "Paired") +
   facet_grid(. ~ Gender) +
   theme_minimal() +
-  theme(strip.placement = "outside", 
-        strip.background = element_rect(fill = "gray90", color = "gray60"), 
-        legend.position = "right") +
-  labs(title = "B. Raw Vowel Trajectories (Formant Contours)", 
-       x = "F2 (Hz)", y = "F1 (Hz)")
+  theme(axis.text.x = element_text(angle = 0, face = "bold", size = 12), 
+        axis.text.y = element_text(angle = 0, face = "bold", size = 12), 
+        strip.placement = "outside", legend.position = "right", 
+        strip.background = element_rect(fill = "gray90", color = "gray60")) +
+  labs(title = "B. Bark-scaled Vowel Trajectories (Formant Contours)", x = "F2 (Bark)", y = "F1 (Bark)", face = "bold")
 
 # ----- Normalized Static Vowel Space Plot -----
 plot_norm_static <- plot_vowel_space(data_norm, "F2_norm", "F1_norm", 
-                                     "A. Normalized Vowel Space (Lobanov, Static)", 
-                                     "F2 (z)", "F1 (z)")
+                                     "A. Normalized Vowel Space (Lobanov, Static)", "F2 (z)", "F1 (z)")
 
 # ----- Normalized Trajectory Plot -----
 plot_norm_trajectory <- ggplot(df_summary, aes(x = F2_norm_avg, y = F1_norm_avg, color = Vowel, group = Vowel)) +
@@ -145,44 +165,405 @@ plot_norm_trajectory <- ggplot(df_summary, aes(x = F2_norm_avg, y = F1_norm_avg,
   scale_color_brewer(palette = "Paired") +
   facet_grid(. ~ Gender) +
   theme_minimal() +
-  theme(strip.placement = "outside", 
-        strip.background = element_rect(fill = "gray90", color = "gray60"), 
-        legend.position = "right") +
-  labs(title = "B. Normalized Vowel Trajectories (Lobanov, Formant Contours)", 
-       x = "F2 (z)", y = "F1 (z)")
+  theme(axis.text.x = element_text(angle = 0, face = "bold", size = 12), 
+        axis.text.y = element_text(angle = 0, face = "bold", size = 12), 
+        strip.placement = "outside", legend.position = "right",
+        strip.background = element_rect(fill = "gray90", color = "gray60")) +
+  labs(title = "B. Normalized Vowel Trajectories (Lobanov, Formant Contours)", x = "F2 (z)", y = "F1 (z)", face = "bold")
 
-# ----- Combine Raw plots (one above the other) -----
-combined_raw <- grid.arrange(plot_raw_static, plot_raw_trajectory, 
-                             ncol = 1,
-                             heights = c(1, 1))
-
+# ----- Combine Bark-scaled plots (one above the other) -----
+combined_raw <- grid.arrange(plot_raw_static, plot_raw_trajectory, ncol = 1, heights = c(1, 1))
 # Display combined raw plot
 combined_raw
 
 # ----- Combine Normalized plots (one above the other) -----
-combined_norm <- grid.arrange(plot_norm_static, plot_norm_trajectory, 
-                              ncol = 1,
-                              heights = c(1, 1))
-
+combined_norm <- grid.arrange(plot_norm_static, plot_norm_trajectory, ncol = 1, heights = c(1, 1))
 # Display combined normalized plot
 combined_norm
 
+# Save both combined plots
+ggsave("Bark-scale Brajbhasha vowels.png", combined_raw, width = 12, height = 11, dpi = 300)
+ggsave("Normalized Brajbhasha vowels.png", combined_norm, width = 12, height = 11, dpi = 300)
+cat("\n✅ Figures 1 and 2 plots saved.\n")
+
 
 # ============================================================
-# 2. LMEs on F1 and F2 for "Vowel" (10 vowels) with EMMeans & Pairwise contrasts
+# 2. LMEs on F1_Bark and F2_Bark for "Vowel" (10 vowels) with EMMeans & Pairwise contrasts
+#    Using Traunmüller (1990) Bark-scale conversion: Bark = (26.81 * f) / (1960 + f) - 0.53
 # ============================================================
 
+# Apply Traunmüller (1990) Bark-scale conversion to F1 and F2
+data <- data %>%
+  mutate(
+    F1_Bark = (26.81 * F1) / (1960 + F1) - 0.53,
+    F2_Bark = (26.81 * F2) / (1960 + F2) - 0.53
+  )
+
+# Relevel reference vowel to "ɐ" for the models
 data$Vowel <- relevel(data$Vowel, ref = "ɐ")
 
-mod_f1 <- lmer(F1 ~ Vowel + (1|Subject), data = data)
-mod_f2 <- lmer(F2 ~ Vowel + (1|Subject), data = data)
+# LME models on Bark-scale formants
+mod_f1_bark <- lmer(F1_Bark ~ Vowel + (1|Subject), data = data)
+mod_f2_bark <- lmer(F2_Bark ~ Vowel + (1|Subject), data = data)
 
-summary(mod_f1)
-summary(mod_f2)
+# Display summaries
+summary(mod_f1_bark)
+summary(mod_f2_bark)
 
-# Estimated Marginal Means and Pairwise Contrasts
-emmeans(mod_f1, pairwise ~ Vowel)
-emmeans(mod_f2, pairwise ~ Vowel)
+# Get EMMeans and Pairwise Contrasts
+emm_f1 <- emmeans(mod_f1_bark, pairwise ~ Vowel)
+emm_f2 <- emmeans(mod_f2_bark, pairwise ~ Vowel)
+
+# Display results
+emm_f1
+emm_f2
+
+# EXPORT TABLES TO EXCEL
+# ============================================================
+
+# 1. Extract Fixed Effects as data frames
+fixef_f1 <- as.data.frame(summary(mod_f1_bark)$coefficients)
+fixef_f2 <- as.data.frame(summary(mod_f2_bark)$coefficients)
+
+# Add row names as a column for clarity
+fixef_f1 <- cbind(Parameter = rownames(fixef_f1), fixef_f1)
+fixef_f2 <- cbind(Parameter = rownames(fixef_f2), fixef_f2)
+
+rownames(fixef_f1) <- NULL
+rownames(fixef_f2) <- NULL
+
+# 2. Extract EMMeans tables
+emm_f1_means <- as.data.frame(emm_f1$emmeans)
+emm_f2_means <- as.data.frame(emm_f2$emmeans)
+
+# 3. Extract Pairwise Contrasts tables
+emm_f1_contrasts <- as.data.frame(emm_f1$contrasts)
+emm_f2_contrasts <- as.data.frame(emm_f2$contrasts)
+
+# 4. Create a list of all tables to export
+tables_to_export <- list(
+  "F1_Bark_Fixed_Effects" = fixef_f1,
+  "F2_Bark_Fixed_Effects" = fixef_f2,
+  "F1_Bark_EMMeans" = emm_f1_means,
+  "F2_Bark_EMMeans" = emm_f2_means,
+  "F1_Bark_Pairwise_Contrasts" = emm_f1_contrasts,
+  "F2_Bark_Pairwise_Contrasts" = emm_f2_contrasts
+)
+
+# 5. Export to Excel file
+write_xlsx(tables_to_export, "Bark-Scaled Mid-vowel F1 & F2 LME Results.xlsx")
+
+cat("\n✅ Excel file 'Bark_Scale_LME_Results.xlsx' has been created with the following sheets:\n")
+cat("   - F1_Bark_Fixed_Effects\n")
+cat("   - F2_Bark_Fixed_Effects\n")
+cat("   - F1_Bark_EMMeans\n")
+cat("   - F2_Bark_EMMeans\n")
+cat("   - F1_Bark_Pairwise_Contrasts\n")
+cat("   - F2_Bark_Pairwise_Contrasts\n")
+
+
+# 6. Visualization of Bark-scaled Formants Faceted Boxplots (F1 and F2 together)
+# ============================================================
+
+# Reshape data for faceted boxplots
+bark_box_long <- data %>%
+  select(Vowel, F1_Bark, F2_Bark) %>%
+  pivot_longer(cols = c(F1_Bark, F2_Bark), 
+               names_to = "Formant", 
+               values_to = "Bark_Value")
+
+bark_box_long <- bark_box_long %>%
+  mutate(Formant = ifelse(Formant == "F1_Bark", "F1 (Height - Bark)", "F2 (Backness - Bark)"))
+
+bark_box_plot <- ggplot(bark_box_long, aes(x = Vowel, y = Bark_Value, fill = Vowel)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 16, outlier.size = 1) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 2, fill = "white", color = "black") +
+  facet_wrap(~ Formant, scales = "free_y", ncol = 1) +
+  scale_fill_brewer(palette = "Paired") +
+  labs(title = "Bark-scaled Formant Distributions by Vowel",
+       subtitle = "Based on Traunmüller (1990) conversion",
+       x = "Vowel", y = "Bark Scale") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 0, hjust = 0, face = "bold"),
+        axis.text.y = element_text(angle = 0, hjust = 0, face = "bold"),
+        strip.background = element_rect(fill = "gray90", color = "gray60"),
+        strip.text = element_text(face = "bold"))
+
+# Save the plot
+ggsave("Bark-scaled Mid-vowel F1 & F2 boxplots by Vowel.png", bark_box_plot, width = 6, height = 5, dpi = 300)
+cat("\n✅ Bark boxplots saved.\n")
+
+
+
+
+
+
+
+
+# ============================================================
+# 2b. Multivariate GAMM (MV-GAMM) on Bark-scaled Formant Contours
+# ============================================================
+
+# ============================================================
+# Prepare Bark-scaled contour data
+# ============================================================
+
+# Reshape contour data to long format
+df_long_bark <- data %>%
+  rename(F1_mid = F1, F2_mid = F2) %>%
+  pivot_longer(cols = matches("F[12]_\\d+"), 
+               names_to = c(".value", "time_point"), 
+               names_pattern = "(F\\d)_(\\d+)") %>%
+  mutate(time_point = as.numeric(time_point),
+         F1_Bark = (26.81 * F1) / (1960 + F1) - 0.53,
+         F2_Bark = (26.81 * F2) / (1960 + F2) - 0.53) %>%
+  group_by(Subject, Vowel) %>%
+  mutate(time_prop = (time_point - min(time_point)) / (max(time_point) - min(time_point))) %>%
+  ungroup()
+
+# Create multivariate format (stack F1 and F2)
+df_mvn <- bind_rows(
+  df_long_bark %>% select(Subject, Vowel, time_prop, Formant_Value = F1_Bark) %>% mutate(Formant_Type = "F1_Bark"),
+  df_long_bark %>% select(Subject, Vowel, time_prop, Formant_Value = F2_Bark) %>% mutate(Formant_Type = "F2_Bark")
+)
+df_mvn$Formant_Type <- factor(df_mvn$Formant_Type, levels = c("F1_Bark", "F2_Bark"))
+
+# ============================================================
+# Fit MV-GAMM
+# ============================================================
+
+gam_mvn_bark <- bam(Formant_Value ~ 
+                      Formant_Type + Vowel + Formant_Type:Vowel +
+                      s(time_prop, bs = "tp", k = 10) +
+                      s(time_prop, by = Formant_Type, bs = "tp", k = 10) +
+                      s(time_prop, by = Vowel, bs = "tp", k = 8) +
+                      s(Subject, bs = "re") +
+                      s(time_prop, Subject, bs = "fs", m = 1),
+                    data = df_mvn, method = "fREML", discrete = TRUE, nthreads = 4)
+
+# Display results
+cat("\n========== MV-GAMM Summary ==========\n")
+summary(gam_mvn_bark)
+cat("\n--- Model Convergence Check ---\n")
+gam.check(gam_mvn_bark)
+
+# Save results to file
+sink("MV_GAMM_Results.txt")
+cat("MV-GAMM Analysis (Traunmüller 1990 Bark conversion)\n\n")
+print(summary(gam_mvn_bark))
+sink()
+cat("\n✅ Results saved to 'MV_GAMM_Besults.txt'\n")
+
+# ============================================================
+# Predict trajectories for all vowels
+# ============================================================
+
+vowels_all <- c("i", "e", "ɛ", "ɪ", "ɐ", "ʊ", "ɑ", "ɔ", "o", "u")
+
+pred_grid <- expand.grid(
+  time_prop = seq(0, 1, length.out = 50),
+  Vowel = vowels_all,
+  Formant_Type = c("F1_Bark", "F2_Bark"),
+  Subject = unique(df_mvn$Subject)[1]
+)
+
+preds <- predict(gam_mvn_bark, newdata = pred_grid, se.fit = TRUE,
+                 exclude = c("s(Subject)", "s(time_prop,Subject)"), type = "link")
+pred_grid$Predicted <- preds$fit
+pred_grid$SE <- preds$se.fit
+
+# ============================================================
+# Visualize predicted trajectories - Side by Side
+# ============================================================
+
+# Figure 1: Stacked F1 and F2 trajectories
+p1 <- pred_grid %>%
+  mutate(Formant_Label = ifelse(Formant_Type == "F1_Bark", "F1 (Height - Bark)", "F2 (Backness - Bark)")) %>%
+  ggplot(aes(x = time_prop, y = Predicted, color = Vowel)) +
+  geom_line(linewidth = 1.2) +
+  facet_wrap(~ Formant_Label, scales = "free_y", ncol = 1) +
+  scale_color_brewer(palette = "Paired") +
+  labs(title = "A. Formant Trajectories",
+       x = "Normalized Time", y = "Bark Scale") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+        strip.background = element_rect(fill = "gray90", color = "gray60"),
+        strip.text = element_text(face = "bold"),
+        legend.position = "none")
+
+# Figure 2: 2D vowel space trajectories
+p2 <- pred_grid %>%
+  pivot_wider(id_cols = c(Vowel, time_prop), names_from = Formant_Type, values_from = Predicted) %>%
+  rename(F2_Bark = F2_Bark, F1_Bark = F1_Bark) %>%
+  ggplot(aes(x = F2_Bark, y = F1_Bark, color = Vowel, group = Vowel)) +
+  geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.15, "cm"), type = "closed")) +
+  geom_point(data = ~ filter(., time_prop == 0), size = 2.5, shape = 21, fill = "white", stroke = 0.8) +
+  #geom_point(data = ~ filter(., time_prop == 1), size = 2.5, shape = 21, fill = "black", stroke = 0.8) +
+  scale_x_reverse() + scale_y_reverse() +
+  scale_color_brewer(palette = "Paired") +
+  labs(title = "B. Vowel Space Trajectories",
+       x = "F2 (Bark) - Backness →", y = "F1 (Bark) - Height →") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+        legend.position = "right")
+
+# Combine side by side
+combined_plot <- p1 + p2 +
+  plot_annotation(
+    title = "MV-GAMM Predicted Bark-scaled Vowel Trajectories",
+    theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+  ) +
+  plot_layout(guides = "collect") #&  # Collect legends together
+#theme(legend.position = "bottom")
+
+# Display the combined plot
+print(combined_plot)
+
+# Save the combined plot
+ggsave("MV_GAMM_Predicted_Trajectories_Combined.png", combined_plot, width = 8, height = 5, dpi = 300)
+cat("\n✅ Combined plot saved to 'MV_GAMM_Predicted_Trajectories_Combined.png'\n")
+
+
+# ============================================================
+# Compare all vowel pairs (45 pairs × 2 formants = 90 comparisons)
+# ============================================================
+
+cat("\n========== Computing ALL vowel pair comparisons ==========\n")
+
+compare_trajectories <- function(pred_data, vowel1, vowel2, formant_type) {
+  data_v1 <- pred_data %>% filter(Vowel == vowel1, Formant_Type == formant_type) %>% arrange(time_prop)
+  data_v2 <- pred_data %>% filter(Vowel == vowel2, Formant_Type == formant_type) %>% arrange(time_prop)
+  
+  diff_df <- data.frame(
+    time_prop = data_v1$time_prop,
+    Diff = data_v1$Predicted - data_v2$Predicted,
+    SE_diff = sqrt(data_v1$SE^2 + data_v2$SE^2)
+  ) %>%
+    mutate(Lower_CI = Diff - 1.96 * SE_diff,
+           Upper_CI = Diff + 1.96 * SE_diff,
+           Significant = Lower_CI > 0 | Upper_CI < 0)
+  
+  prop_sig <- mean(diff_df$Significant, na.rm = TRUE)
+  sig_regions <- diff_df %>% filter(Significant) %>% summarise(
+    first_sig_time = ifelse(any(Significant), min(time_prop), NA),
+    last_sig_time = ifelse(any(Significant), max(time_prop), NA)
+  )
+  
+  result <- data.frame(Vowel1 = vowel1, Vowel2 = vowel2, Formant = formant_type,
+                       Significant = prop_sig > 0,
+                       Proportion_Significant = round(prop_sig * 100, 2),
+                       First_Sig_Time = sig_regions$first_sig_time,
+                       Last_Sig_Time = sig_regions$last_sig_time)
+  
+  return(list(result = result, diff_data = diff_df %>% mutate(Pair = paste0(vowel1, "_vs_", vowel2, "_", formant_type))))
+}
+
+# Run all comparisons
+vowel_pairs <- combn(vowels_all, 2, simplify = FALSE)
+all_results <- list(); all_diff_data <- list()
+
+for(form in c("F1_Bark", "F2_Bark")) {
+  for(pair in vowel_pairs) {
+    comp <- compare_trajectories(pred_grid, pair[1], pair[2], form)
+    all_results[[length(all_results) + 1]] <- comp$result
+    all_diff_data[[length(all_diff_data) + 1]] <- comp$diff_data
+    cat(".")
+  }
+}
+
+results_df_all <- bind_rows(all_results)
+diff_data_df_all <- bind_rows(all_diff_data)
+
+cat("\n✅ Computed", nrow(results_df_all), "comparisons (", sum(results_df_all$Significant), "significant)\n")
+
+# Export to Excel
+write_xlsx(list("All_Comparisons" = results_df_all, "Difference_Curves" = diff_data_df_all), 
+           "All_45_Vowel_Pairs_Trajectory_Comparisons.xlsx")
+cat("✅ Exported to 'All_Vowel_Pairs_Trajectory_Comparisons.xlsx'\n")
+
+# ============================================================
+# Generate combined PDF (45 pages: each page = F1 + F2 for one vowel pair)
+# ============================================================
+
+cat("\n========== Generating PDF ==========\n")
+
+plot_combined_difference <- function(v1, v2, diff_data_df_all) {
+  get_diff_data <- function(v1, v2, form) {
+    pair_name <- paste0(v1, "_vs_", v2, "_", form)
+    d <- diff_data_df_all %>% filter(Pair == pair_name)
+    if(nrow(d) == 0) {
+      d <- diff_data_df_all %>% filter(Pair == paste0(v2, "_vs_", v1, "_", form))
+      if(nrow(d) > 0) { temp <- v1; v1 <- v2; v2 <- temp }
+    }
+    return(list(data = d, v1 = v1, v2 = v2))
+  }
+  
+  f1 <- get_diff_data(v1, v2, "F1_Bark")
+  f2 <- get_diff_data(v1, v2, "F2_Bark")
+  
+  if(nrow(f1$data) == 0 || nrow(f2$data) == 0) return(NULL)
+  
+  make_plot <- function(diff_data, title, ylab, xlab, color, is_sig) {
+    prop_sig <- round(mean(diff_data$Significant, na.rm = TRUE) * 100, 1)
+    ggplot(diff_data, aes(x = time_prop, y = Diff)) +
+      geom_ribbon(aes(ymin = Lower_CI, ymax = Upper_CI), alpha = 0.2, fill = "gray50") +
+      geom_line(color = color, linewidth = 1) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 0.8) +
+      labs(title = title, subtitle = sprintf("%s %s (%s%% of time)", 
+                                             ifelse(is_sig, "✓", "✗"), ifelse(is_sig, "SIGNIFICANT", "NOT SIGNIFICANT"), prop_sig),
+           x = xlab, y = ylab) +
+      theme_minimal(base_size = 10) +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 11),
+            plot.subtitle = element_text(hjust = 0.5, size = 9, color = ifelse(is_sig, "darkgreen", "darkred")),
+            panel.grid.minor = element_blank())
+  }
+  
+  p1 <- make_plot(f1$data, paste("F1 (Height):", f1$v1, "vs", f1$v2), "Difference in F1 (Bark)", "", "blue", any(f1$data$Significant))
+  p2 <- make_plot(f2$data, paste("F2 (Backness):", f2$v1, "vs", f2$v2), "Difference in F2 (Bark)", "Normalized Time (proportion)", "darkgreen", any(f2$data$Significant))
+  
+  return((p1 / p2) + plot_annotation(title = paste(f1$v1, "vs", f1$v2), 
+                                     theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))))
+}
+
+cairo_pdf("All_45_Vowel_Pairs_Combined_Difference_Curves.pdf", width = 10, height = 10, onefile = TRUE)
+plot_count <- 0
+for(pair in vowel_pairs) {
+  p <- plot_combined_difference(pair[1], pair[2], diff_data_df_all)
+  if(!is.null(p)) { print(p); plot_count <- plot_count + 1 }
+}
+dev.off()
+cat("✅", plot_count, "pages saved to 'All_Vowel_Pairs_Combined_Difference_Curves.pdf'\n")
+
+# ============================================================
+# Heatmap: percentage of significant time
+# ============================================================
+
+cat("\n========== Generating Heatmap ==========\n")
+
+heatmap_data <- results_df_all %>%
+  mutate(Vowel1 = factor(Vowel1, levels = vowels_all),
+         Vowel2 = factor(Vowel2, levels = vowels_all))
+
+ggplot(heatmap_data, aes(x = Vowel1, y = Vowel2, fill = Proportion_Significant)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Proportion_Significant, 0)), size = 3) +
+  facet_wrap(~ Formant) +
+  scale_fill_gradient(low = "white", high = "green4", name = "% of time\nsignificant") +
+  labs(title = "Vowel Pair Trajectory Differences", x = "Vowel 1", y = "Vowel 2") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0, face = "bold"),
+        axis.text.y = element_text(angle = 0, hjust = 0, face = "bold"),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        strip.text = element_text(face = "bold"))
+
+ggsave("Trajectory_Contrast_Heatmap.png", width = 7, height = 3.5, dpi = 300)
+cat("✅ Heatmap saved to 'Trajectory_Contrast_Heatmap.png'\n")
+
+
+
+
 
 
 
